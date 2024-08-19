@@ -1,10 +1,12 @@
+INPUT = "whitelist.yaml"
+OUTPUT = "whitelist.json"
+
 import json
 import yaml
 import requests
 
 MOJANG_API_URL = "https://api.mojang.com/users/profiles/minecraft/{}"
-INPUT = "whitelist.yaml"
-OUTPUT = "whitelist.json"
+MOJANG_NAME_API_URL = "https://api.mojang.com/user/profiles/{}/names"
 
 def get_uuid(playername):
     response = requests.get(MOJANG_API_URL.format(playername))
@@ -12,66 +14,74 @@ def get_uuid(playername):
         return response.json()['id']
     return None
 
-def load_and_sort_yaml(yaml_path) -> list[str]:
+def get_name(uuid):
+    response = requests.get(MOJANG_NAME_API_URL.format(uuid))
+    
+    if response.status_code == 200:
+        name_history = response.json()
+        current_name = name_history[-1]['name']
+        return current_name
+    else:
+        print(f"Kein Spielername für UUID {uuid} gefunden.")
+        return None
 
+def load_whitelist(whitelist_path) -> set[str]:
+    "Sortiertes Set der UUIDs beliebiger Einträge"
+    try:
+        with open(whitelist_path, 'r') as file:
+            whitelist = json.load(file)
+        return sorted({player['uuid'] for player in whitelist})
+    except FileNotFoundError: 
+        return []
+
+def load_config(yaml_path) -> set[str]:
+    "Sortiertes Set der Namen beliebiger Einträge"
     with open(yaml_path, 'r') as file:
         data = yaml.safe_load(file)
-        entries = data.get('whitelist', [])
+    entrys = data.get('whitelist', [])
+    return sorted(set(entrys))
 
-    # Doppelte Einträge entfernen und Liste alphabetisch sortieren
-    playernames = sorted(set(entries))
-
-    # Sortierte und bereinigte Liste wieder in das ursprüngliche Format umwandeln
-    data['whitelist'] = playernames
-
-    # Die bereinigte und sortierte Liste in der YAML-Datei speichern
-    with open(yaml_path, 'w') as file:
-        yaml.dump(data, file, default_flow_style=False)
-
-    return playernames
 
 # Funktion zur Erstellung der Whitelist
-def create_whitelist(player_names, existing_whitelist='whitelist.json'):
-    try:
-        with open(existing_whitelist, 'r') as file:
-            whitelist = json.load(file)
-    except FileNotFoundError:
-        whitelist = []
+def create_whitelist(config_file=INPUT,
+                     whitelist_file=OUTPUT,
+                     existing_whitelist=OUTPUT,
+                     respect_whitelist=True):
+    
+    players_req = load_config(config_file)
+    
+    if respect_whitelist:
+        respected_uuids = load_whitelist(existing_whitelist)
+        for uuid in respected_uuids:
+            if get_name(uuid):
+                players_req.add(get_name(uuid))
 
-    # Erstelle ein Set von vorhandenen UUIDs für eine schnelle Überprüfung
-    existing_uuids = {entry['uuid'] for entry in whitelist}
+    whitelist = []
 
-    for player_name in player_names:
+    for player_name in players_req:
         player_uuid = get_uuid(player_name)
         if player_uuid:
-            if player_uuid not in existing_uuids:
-                # Spieler zur Whitelist hinzufügen
-                new_entry = {
-                    "uuid": player_uuid,
-                    "name": player_name
-                }
-                whitelist.append(new_entry)
-                existing_uuids.add(player_uuid)  # UUID zum Set hinzufügen
-                print(f"Hinzugefügt: {player_name} (UUID: {player_uuid})")
-            else:
-                print(f"Spieler mit UUID {player_uuid} (Name: {player_name}) ist bereits vorhanden.")
+            
+            new_entry = {
+                "uuid": player_uuid,
+                "name": player_name
+            }
+            whitelist.append(new_entry)
+            print(f"Hinzugefügt: {player_name} (UUID: {player_uuid})")
         else:
             print(f"Nicht gefunden: {player_name}")
 
     # Whitelist in Datei speichern
-    with open(existing_whitelist, 'w') as file:
+    with open(whitelist_file, 'w') as file:
         json.dump(whitelist, file, indent=4)
     print("Whitelist erfolgreich aktualisiert.")
 
 
-# Hauptprogramm
-def main(yaml_path='whitelist.yaml', whitelist_path='whitelist.json'):
-    # Spieler aus YAML laden und sortieren
-    player_names = load_and_sort_yaml(yaml_path)
+create_whitelist(config_file=INPUT,
+                 whitelist_file=OUTPUT,
+                 existing_whitelist=OUTPUT,
+                 respect_whitelist=True)
 
-    # Whitelist erstellen oder aktualisieren
-    create_whitelist(player_names, whitelist_path)
+print(load_config(INPUT))
 
-# Beispielaufruf des Hauptprogramms
-if __name__ == "__main__":
-    main()
+print(requests.get(MOJANG_NAME_API_URL.format("853c80ef3c3749fdaa49938b674adae6")))
